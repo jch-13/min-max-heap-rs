@@ -813,9 +813,10 @@ impl<'a, T: Ord> Drop for PeekMaxMut<'a, T> {
             };
 
             match hole.get_parent() {
-                Some(parent) if hole.element() < parent => unsafe {
-                    // SAFETY: element has a parent
-                    hole.swap_with_parent();
+                Some(mut parent)
+                    if parent.hole_element() < parent.other_element() =>
+                {
+                   parent.swap_with();
                 }
                 _ => {},
             }
