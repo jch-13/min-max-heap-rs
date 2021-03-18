@@ -1,5 +1,5 @@
-use std::{mem, ptr};
 use std::mem::ManuallyDrop;
+use std::{mem, ptr};
 
 use super::index::*;
 
@@ -22,7 +22,11 @@ impl<'a, T> Hole<'a, T> {
     pub unsafe fn new(data: &'a mut [T], pos: usize) -> Self {
         debug_assert!(pos < data.len());
         let elt = ptr::read(data.get_unchecked(pos));
-        Hole { data, elt: ManuallyDrop::new(elt), pos }
+        Hole {
+            data,
+            elt: ManuallyDrop::new(elt),
+            pos,
+        }
     }
 
     #[inline]
@@ -62,14 +66,14 @@ impl<'a, T> Hole<'a, T> {
     }
 
     #[inline]
-    fn best_child_or_grandchild<F>(&mut self, f: F)
-        -> Option<(HoleSwap<'a, '_, T>, Generation)>
-        where F: Fn(&T, &T) -> bool
+    fn best_child_or_grandchild<F>(&mut self, f: F) -> Option<(HoleSwap<'a, '_, T>, Generation)>
+    where
+        F: Fn(&T, &T) -> bool,
     {
         let data = &*self.data;
         let here = self.pos();
 
-        let mut best    = None;
+        let mut best = None;
         let mut element = self.element();
 
         {
@@ -100,7 +104,10 @@ impl<'a, T> Hole<'a, T> {
         })
     }
 
-    fn trickle_down_best<F>(&mut self, f: F) where F: Fn(&T, &T) -> bool {
+    fn trickle_down_best<F>(&mut self, f: F)
+    where
+        F: Fn(&T, &T) -> bool,
+    {
         loop {
             match self.best_child_or_grandchild(&f) {
                 Some((best, generation)) => {
@@ -108,9 +115,7 @@ impl<'a, T> Hole<'a, T> {
                     match generation {
                         Generation::Grandchild => {
                             // SAFETY: `pos` has a parent since it has a grandparent
-                            let mut parent = unsafe {
-                                HoleSwap::new(self, self.pos().parent())
-                            };
+                            let mut parent = unsafe { HoleSwap::new(self, self.pos().parent()) };
                             if f(parent.other_element(), parent.hole_element()) {
                                 parent.swap_with();
                             }
@@ -128,9 +133,7 @@ impl<'a, T: Ord + 'a> Hole<'a, T> {
     pub fn bubble_up(&mut self) {
         if self.on_min_level() {
             match self.get_parent() {
-                Some(parent)
-                    if parent.hole_element() > parent.other_element() =>
-                {
+                Some(parent) if parent.hole_element() > parent.other_element() => {
                     parent.move_to();
                     self.bubble_up_max();
                 }
@@ -138,9 +141,7 @@ impl<'a, T: Ord + 'a> Hole<'a, T> {
             }
         } else {
             match self.get_parent() {
-                Some(parent)
-                    if parent.hole_element() < parent.other_element() =>
-                {
+                Some(parent) if parent.hole_element() < parent.other_element() => {
                     parent.move_to();
                     self.bubble_up_min();
                 }
@@ -150,13 +151,12 @@ impl<'a, T: Ord + 'a> Hole<'a, T> {
     }
 
     fn bubble_up_grandparent<F>(&mut self, f: F)
-        where F: Fn(&T, &T) -> bool
+    where
+        F: Fn(&T, &T) -> bool,
     {
         loop {
             match self.get_grandparent() {
-                Some(grandparent)
-                    if f(grandparent.hole_element(), grandparent.other_element()) =>
-                {
+                Some(grandparent) if f(grandparent.hole_element(), grandparent.other_element()) => {
                     grandparent.move_to();
                 }
                 _ => break,
