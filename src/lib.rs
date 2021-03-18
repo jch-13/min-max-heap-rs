@@ -117,7 +117,7 @@ impl<T: Ord> MinMaxHeap<T> {
         } else {
             Some(PeekMinMut {
                 heap: self,
-                removed: false,
+                sift: false,
             })
         }
     }
@@ -141,7 +141,7 @@ impl<T: Ord> MinMaxHeap<T> {
         self.find_max().map(move |i| PeekMaxMut {
             heap: self,
             max_index: i,
-            removed: false,
+            sift: false,
         })
     }
 
@@ -180,10 +180,9 @@ impl<T: Ord> MinMaxHeap<T> {
     /// *O*(log *n*).
     pub fn pop_max(&mut self) -> Option<T> {
         self.find_max().map(|max| {
-            let mut item = self.0.pop().unwrap();
+            let item = self.0.swap_remove(max);
 
-            if let Some(max_element) = self.0.get_mut(max) {
-                mem::swap(&mut item, max_element);
+            if  max < self.len() {
                 // SAFETY: `max` is a valid index in `self.0`
                 unsafe {
                     self.trickle_down_max(max);
@@ -218,14 +217,10 @@ impl<T: Ord> MinMaxHeap<T> {
     ///
     /// *O*(log *n*).
     pub fn push_pop_min(&mut self, mut element: T) -> T {
-        if self.is_empty() { return element; }
-
-        if element < self.0[0] { return element; }
-
-        mem::swap(&mut element, &mut self.0[0]);
-        // SAFETY: `self.0` is not empty
-        unsafe {
-            self.trickle_down_min(0);
+        if let Some(mut min) = self.peek_min_mut() {
+            if element > *min {
+                mem::swap(&mut element, &mut min);
+            }
         }
         element
     }
@@ -254,21 +249,12 @@ impl<T: Ord> MinMaxHeap<T> {
     ///
     /// *O*(log *n*).
     pub fn push_pop_max(&mut self, mut element: T) -> T {
-        if let Some(i) = self.find_max() {
-            if element > self.0[i] { return element }
-
-            mem::swap(&mut element, &mut self.0[i]);
-
-            if self.0[i] < self.0[0] {
-                self.0.swap(0, i);
+        if let Some(mut max) = self.peek_max_mut() {
+            if element < *max {
+                mem::swap(&mut element, &mut max);
             }
-
-            // SAFETY: `i` is a valid index in `self.0`
-            unsafe {
-                self.trickle_down_max(i);
-            }
-            element
-        } else { element }
+        }
+        element
     }
 
     /// Pops the minimum element and pushes a new element, in an
@@ -295,15 +281,15 @@ impl<T: Ord> MinMaxHeap<T> {
     ///     <struct.MinMaxHeap.html#method.push_pop_min>
     ///
     /// *O*(log *n*).
-    pub fn replace_min(&mut self, mut element: T) -> Option<T> { if
-        self.is_empty() { self.push(element); return None; }
-
-        mem::swap(&mut element, &mut self.0[0]);
-        // SAFETY: `self.0` is not empty
-        unsafe {
-            self.trickle_down_min(0);
+    pub fn replace_min(&mut self, mut element: T) -> Option<T> {
+        if let Some(mut min) = self.peek_min_mut() {
+            mem::swap(&mut element, &mut min);
+            return Some(element);
         }
-        Some(element)
+
+        // Heap was empty, so no reordering is necessary
+        self.0.push(element);
+        None
     }
 
     /// Pops the maximum element and pushes a new element, in an
@@ -331,22 +317,22 @@ impl<T: Ord> MinMaxHeap<T> {
     ///
     /// *O*(log *n*).
     pub fn replace_max(&mut self, mut element: T) -> Option<T> {
-        if let Some(i) = self.find_max() {
-            mem::swap(&mut element, &mut self.0[i]);
-
-            if self.0[i] < self.0[0] {
-                self.0.swap(0, i);
+        if let Some(mut max) = self.peek_max_mut() {
+            // If `element` is the new min, swap it with the current min
+            // (unless the min is the same as the max)
+            if max.heap.len() > 1 {
+                let min = &mut max.heap.0[0];
+                if element < *min {
+                    mem::swap(&mut element, min);
+                }
             }
-
-            // SAFETY: `i` is a valid index in `self.0`
-            unsafe {
-                self.trickle_down_max(i);
-            }
-            Some(element)
-        } else {
-            self.push(element);
-            None
+            mem::swap(&mut element, &mut max);
+            return Some(element);
         }
+
+        // Heap was empty, so no reordering is neessary
+        self.0.push(element);
+        None
     }
 
     /// Returns an ascending (sorted) vector, reusing the heap’s
@@ -729,7 +715,7 @@ impl<'a, T: Ord + Clone + 'a> Extend<&'a T> for MinMaxHeap<T> {
 /// [`MinMaxHeap`]: struct.MinMaxHeap.html
 pub struct PeekMinMut<'a, T: 'a + Ord> {
     heap: &'a mut MinMaxHeap<T>,
-    removed: bool,
+    sift: bool,
 }
 
 impl<T: Ord + fmt::Debug> fmt::Debug for PeekMinMut<'_, T> {
@@ -742,7 +728,7 @@ impl<T: Ord + fmt::Debug> fmt::Debug for PeekMinMut<'_, T> {
 
 impl<'a, T: Ord> Drop for PeekMinMut<'a, T> {
     fn drop(&mut self) {
-        if !self.removed {
+        if self.sift {
             // SAFETY: `heap` is not empty
             unsafe {
                 self.heap.trickle_down_min(0);
@@ -763,6 +749,7 @@ impl<'a, T: Ord> Deref for PeekMinMut<'a, T> {
 impl<'a, T: Ord> DerefMut for PeekMinMut<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         debug_assert!(!self.heap.is_empty());
+        self.sift = true;
         // SAFE: PeekMinMut is only instantiated for non-empty heaps
         unsafe { self.heap.0.get_unchecked_mut(0) }
     }
@@ -771,9 +758,9 @@ impl<'a, T: Ord> DerefMut for PeekMinMut<'a, T> {
 impl<'a, T: Ord> PeekMinMut<'a, T> {
     /// Removes the peeked value from the heap and returns it.
     pub fn pop(mut self) -> T {
-        let value = self.heap.pop_min().unwrap();
-        self.removed = true;
-        value
+        // Sift is unnecessary since pop_min() already reorders heap
+        self.sift = false;
+        self.heap.pop_min().unwrap()
     }
 }
 
@@ -788,7 +775,7 @@ impl<'a, T: Ord> PeekMinMut<'a, T> {
 pub struct PeekMaxMut<'a, T: 'a + Ord> {
     heap: &'a mut MinMaxHeap<T>,
     max_index: usize,
-    removed: bool,
+    sift: bool,
 }
 
 impl<T: Ord + fmt::Debug> fmt::Debug for PeekMaxMut<'_, T> {
@@ -801,7 +788,7 @@ impl<T: Ord + fmt::Debug> fmt::Debug for PeekMaxMut<'_, T> {
 
 impl<'a, T: Ord> Drop for PeekMaxMut<'a, T> {
     fn drop(&mut self) {
-        if !self.removed {
+        if self.sift {
             // SAFETY: `max_index` is a valid index in `heap`
             let mut hole = unsafe {
                 Hole::new(&mut self.heap.0, self.max_index)
@@ -833,6 +820,7 @@ impl<'a, T: Ord> Deref for PeekMaxMut<'a, T> {
 impl<'a, T: Ord> DerefMut for PeekMaxMut<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         debug_assert!(self.max_index < self.heap.len());
+        self.sift = true;
         // SAFE: PeekMaxMut is only instantiated for non-empty heaps
         unsafe { self.heap.0.get_unchecked_mut(self.max_index) }
     }
@@ -841,9 +829,9 @@ impl<'a, T: Ord> DerefMut for PeekMaxMut<'a, T> {
 impl<'a, T: Ord> PeekMaxMut<'a, T> {
     /// Removes the peeked value from the heap and returns it.
     pub fn pop(mut self) -> T {
-        let value = self.heap.pop_max().unwrap();
-        self.removed = true;
-        value
+        // Sift is unnecessary since pop_max() already reorders heap
+        self.sift = false;
+        self.heap.pop_max().unwrap()
     }
 }
 
@@ -951,6 +939,31 @@ mod tests {
     }
 
     #[test]
+    fn replace_min() {
+        let mut h = MinMaxHeap::from(vec![1, 2]);
+        assert_eq!(Some(1), h.replace_min(0));
+        assert_eq!(Some(&0), h.peek_min());
+        assert_eq!(Some(&2), h.peek_max());
+
+        assert_eq!(Some(0), h.replace_min(3));
+        assert_eq!(Some(&2), h.peek_min());
+        assert_eq!(Some(&3), h.peek_max());
+    }
+
+    #[test]
+    fn replace_min_edge_cases() {
+        let mut empty_heap = MinMaxHeap::new();
+        assert_eq!(None, empty_heap.replace_min(1));
+        assert_eq!(Some(1), empty_heap.pop_min());
+        assert_eq!(None, empty_heap.pop_min());
+
+        let mut one_element_heap = MinMaxHeap::from(vec![2]);
+        assert_eq!(Some(2), one_element_heap.replace_min(1));
+        assert_eq!(Some(1), one_element_heap.pop_min());
+        assert_eq!(None, one_element_heap.pop_min());
+    }
+
+    #[test]
     fn replace_max() {
         let mut h = MinMaxHeap::from(vec![1, 2]);
         assert_eq!(Some(2), h.replace_max(3));
@@ -960,6 +973,19 @@ mod tests {
         assert_eq!(Some(3), h.replace_max(0));
         assert_eq!(Some(&0), h.peek_min());
         assert_eq!(Some(&1), h.peek_max());
+    }
+
+    #[test]
+    fn replace_max_edge_cases() {
+        let mut empty_heap = MinMaxHeap::new();
+        assert_eq!(None, empty_heap.replace_max(1));
+        assert_eq!(Some(1), empty_heap.pop_max());
+        assert_eq!(None, empty_heap.pop_max());
+
+        let mut one_element_heap = MinMaxHeap::from(vec![1]);
+        assert_eq!(Some(1), one_element_heap.replace_max(2));
+        assert_eq!(Some(2), one_element_heap.pop_max());
+        assert_eq!(None, one_element_heap.pop_max());
     }
 
     #[test]
@@ -992,6 +1018,17 @@ mod tests {
         assert_eq!(1, h.peek_max_mut().unwrap().pop());
         assert_eq!(Some(&0), h.peek_min());
         assert_eq!(Some(&0), h.peek_max());
+    }
+
+    #[test]
+    fn peek_max_mut_one() {
+        let mut h = MinMaxHeap::from(vec![1]);
+        {
+            let mut max = h.peek_max_mut().unwrap();
+            assert_eq!(*max, 1);
+            *max = 2;
+        }
+        assert_eq!(h.peek_max(), Some(&2));
     }
 
     #[test]
